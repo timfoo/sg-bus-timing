@@ -3,6 +3,8 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "functions": {
-    "api/*.ts": {}
+    "api/*.ts": {
+      "memory": 256
+    }
   }
 }

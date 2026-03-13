@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
         '/api/bus-stops': {
           target: 'https://datamall2.mytransport.sg',
           changeOrigin: true,
-          rewrite: (path) => path.replace('/api/bus-stops', '/ltaodataservice/v3/BusStops'),
+          rewrite: (path) => path.replace('/api/bus-stops', '/ltaodataservice/BusStops'),
           configure: (proxy) => {
             proxy.on('proxyReq', (proxyReq) => {
               proxyReq.setHeader('AccountKey', env.LTA_API_KEY ?? '')

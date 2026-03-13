@@ -156,13 +156,11 @@ async function glassesFavorites(bridge: Bridge, favStops: BusStop[]) {
   const rows = favStops.length
     ? [
         `← BACK`,
-        ...favStops.map(s => `${s.BusStopCode}  ${s.Description}  ${s.RoadName}`),
+        ...favStops.map(s => `${s.BusStopCode} | ${s.Description} (${s.RoadName})`),
       ]
     : [
         `← BACK`,
-        'No favorites yet.',
-        'View arrivals on glasses,',
-        'then double-click to save.',
+        'No favorites saved. View arrivals to save a stop.',
       ]
   const items = [...rows, ...Array(Math.max(0, 8 - rows.length)).fill('')]
   try {
@@ -195,7 +193,7 @@ async function glassesFavorites(bridge: Bridge, favStops: BusStop[]) {
 }
 
 // ── Arrivals view ─────────────────────────────────────────────────────────────
-async function glassesArrivals(bridge: Bridge, stop: BusStop, data: LtaResponse) {
+async function glassesArrivals(bridge: Bridge, stop: BusStop, data: LtaResponse, isFav: boolean) {
   const updated = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' })
   const sorted = [...(data.Services ?? [])].sort((a, b) =>
     a.ServiceNo.localeCompare(b.ServiceNo, undefined, { numeric: true })
@@ -207,7 +205,8 @@ async function glassesArrivals(bridge: Bridge, stop: BusStop, data: LtaResponse)
     return `${svc.ServiceNo.padEnd(10)}${n1}${n2}${n3}`
   })
   const rows = [
-    `< ${stop.BusStopCode}  ${stop.Description}  (updated: ${updated})`,
+    `← Back`,
+    `${stop.BusStopCode} | ${stop.Description} | ${isFav ? '★ Saved' : '☆ Save'}`,
     `SVC       NEXT        2ND         3RD`,
     ...(svcRows.length ? svcRows : ['No services in operation']),
   ]
@@ -221,7 +220,7 @@ async function glassesArrivals(bridge: Bridge, stop: BusStop, data: LtaResponse)
         isEventCapture: 1,
         itemContainer: new ListItemContainerProperty({
           itemCount: items.length, itemWidth: 576,
-          isItemSelectBorderEn: 0, itemName: items,
+          isItemSelectBorderEn: 1, itemName: items,
         }),
       })],
     }))
@@ -338,15 +337,17 @@ async function main() {
     const idx = favoriteStopCodes.indexOf(stop.BusStopCode)
     if (idx >= 0) {
       favoriteStopCodes.splice(idx, 1)
-      setStatus(`Removed ${stop.BusStopCode} from favorites`)
     } else {
       favoriteStopCodes.push(stop.BusStopCode)
-      setStatus(`★ Added ${stop.BusStopCode} to favorites`)
     }
     if (bridge) {
       try { await bridge.setLocalStorage('favorites', JSON.stringify(favoriteStopCodes)) } catch { /* ignore */ }
+      // Refresh arrivals header to reflect new ★/☆ state
+      try {
+        const data = await fetchArrivals(stop.BusStopCode)
+        await glassesArrivals(bridge, stop, data, favoriteStopCodes.includes(stop.BusStopCode))
+      } catch { /* ignore */ }
     }
-    setTimeout(() => setStatus(''), 2000)
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -363,7 +364,7 @@ async function main() {
     try {
       const data = await fetchArrivals(stop.BusStopCode)
       renderArrivals(stop, data)
-      if (bridge) await glassesArrivals(bridge, stop, data)
+      if (bridge) await glassesArrivals(bridge, stop, data, favoriteStopCodes.includes(stop.BusStopCode))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch')
     }
@@ -371,7 +372,7 @@ async function main() {
       try {
         const data = await fetchArrivals(stop.BusStopCode)
         renderArrivals(stop, data)
-        if (bridge) await glassesArrivals(bridge, stop, data)
+        if (bridge) await glassesArrivals(bridge, stop, data, favoriteStopCodes.includes(stop.BusStopCode))
       } catch { /* ignore refresh errors */ }
     }, AUTO_REFRESH_MS)
   }
@@ -408,14 +409,16 @@ async function main() {
       const name     = event.listEvent?.containerName
       const isClick  = event.listEvent != null &&
         (listType == null || listType === OsEventTypeList.CLICK_EVENT)
-      const isDoubleClick = listType === OsEventTypeList.DOUBLE_CLICK_EVENT
 
       if (name === 'arrivals') {
-        if (isDoubleClick && currentStop) {
-          toggleFavorite(currentStop)
-        } else if (isClick) {
-          if (listView === 'favorites') showFavorites()
-          else showStops()
+        const idx = event.listEvent?.currentSelectItemIndex
+        if (isClick) {
+          if (idx == null) {                            // first item = ← BACK
+            if (listView === 'favorites') showFavorites()
+            else showStops()
+          } else if (idx === 1 && currentStop) {        // second item = ☆ SAVE / ★ SAVED
+            toggleFavorite(currentStop)
+          }
         }
       } else if (name === 'stop-list') {
         const idx = event.listEvent?.currentSelectItemIndex

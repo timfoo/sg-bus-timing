@@ -2,10 +2,9 @@ import {
   waitForEvenAppBridge,
   CreateStartUpPageContainer,
   RebuildPageContainer,
-  ImageContainerProperty,
-  ImageRawDataUpdate,
   ListContainerProperty,
   ListItemContainerProperty,
+  TextContainerProperty,
   OsEventTypeList,
 } from '@evenrealities/even_hub_sdk'
 
@@ -110,392 +109,123 @@ function getGPS(): Promise<GeolocationCoordinates> {
 // ── Glasses rendering ─────────────────────────────────────────────────────────
 type Bridge = Awaited<ReturnType<typeof waitForEvenAppBridge>>
 
-function glassCell(iso: string): string {
-  if (!iso) return '---'.padEnd(6)
-  const m = minutesFromNow(iso)
-  if (m < 0) return '---'.padEnd(6)
-  return (m === 0 ? 'Arr' : `${m}min`).padEnd(6)
-}
+// Container ID constants
+const CID_STOP_TITLE = 1
+const CID_STOP_COUNT = 2
+const CID_STOP_LIST  = 3
+const CID_ARR_LIST   = 4
+const CID_FAV_LIST   = 5
 
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number, w: number, h: number, r: number
-) {
-  ctx.beginPath()
-  ctx.moveTo(x + r, y)
-  ctx.arcTo(x + w, y, x + w, y + h, r)
-  ctx.arcTo(x + w, y + h, x, y + h, r)
-  ctx.arcTo(x, y + h, x, y, r)
-  ctx.arcTo(x, y, x + w, y, r)
-  ctx.closePath()
-}
-
-function canvasToGray4(canvas: HTMLCanvasElement): number[] {
-  const ctx = canvas.getContext('2d')!
-  const { data } = ctx.getImageData(0, 0, 576, 288)
-  const out: number[] = []
-  for (let i = 0; i < 576 * 288 * 4; i += 8) {
-    const l1 = Math.min(15, Math.round((data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) / (255 * 17)))
-    const l2 = Math.min(15, Math.round((data[i + 4] * 77 + data[i + 5] * 150 + data[i + 6] * 29) / (255 * 17)))
-    out.push((l1 << 4) | l2)
-  }
-  return out
-}
-
-function drawStopListCanvas(stops: BusStop[], selectedIdx: number): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  canvas.width = 576
-  canvas.height = 288
-  const ctx = canvas.getContext('2d')!
-
-  // Black background
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, 576, 288)
-
-  // ── Header bar (y:0 h:38) ──
-  ctx.fillStyle = '#111'
-  ctx.fillRect(0, 0, 576, 38)
-  // Bottom border
-  ctx.strokeStyle = '#333'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, 38)
-  ctx.lineTo(576, 38)
-  ctx.stroke()
-  // Left: "◎  NEARBY STOPS"
-  ctx.fillStyle = '#fff'
-  ctx.font = 'bold 15px sans-serif'
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'left'
-  ctx.fillText('◎  NEARBY STOPS', 12, 19)
-  // Right: "${n} found  ·  ≤500m"
-  ctx.fillStyle = '#888'
-  ctx.font = '12px sans-serif'
-  ctx.textAlign = 'right'
-  ctx.fillText(`${stops.length} found  ·  ≤500m`, 564, 19)
-
-  // ── Stop rows (y:42, each row h:28) ──
-  const ROW_H = 28
-  const ROW_Y0 = 42
-
-  stops.slice(0, 8).forEach((stop, i) => {
-    const rowY = ROW_Y0 + i * ROW_H
-    const isSelected = selectedIdx === i + 1
-
-    if (isSelected) {
-      // Selected row fill
-      ctx.fillStyle = '#1a1a1a'
-      ctx.fillRect(0, rowY, 576, ROW_H)
-      // White rounded border
-      ctx.strokeStyle = '#fff'
-      ctx.lineWidth = 1.5
-      roundRect(ctx, 1, rowY + 1, 574, ROW_H - 2, 3)
-      ctx.stroke()
-    } else {
-      // Bottom separator
-      ctx.strokeStyle = '#1a1a1a'
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      ctx.moveTo(0, rowY + ROW_H - 1)
-      ctx.lineTo(576, rowY + ROW_H - 1)
-      ctx.stroke()
-    }
-
-    const midY = rowY + ROW_H / 2
-
-    // Col 1: stop code (x:10, w:52)
-    ctx.fillStyle = isSelected ? '#fff' : '#aaa'
-    ctx.font = 'bold 13px monospace'
-    ctx.textBaseline = 'middle'
-    ctx.textAlign = 'left'
-    ctx.fillText(stop.BusStopCode, 10, midY)
-
-    // Vertical divider at x:64
-    ctx.strokeStyle = '#2a2a2a'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(64, rowY + 4)
-    ctx.lineTo(64, rowY + ROW_H - 4)
-    ctx.stroke()
-
-    // Col 2: description (x:70, truncate to x:490)
-    ctx.fillStyle = isSelected ? '#fff' : '#bbb'
-    ctx.font = isSelected ? 'bold 13px sans-serif' : '13px sans-serif'
-    ctx.textAlign = 'left'
-    // Measure and truncate with ellipsis
-    const maxDescW = 490 - 70
-    let desc = stop.Description
-    if (ctx.measureText(desc).width > maxDescW) {
-      while (desc.length > 0 && ctx.measureText(desc + '…').width > maxDescW) {
-        desc = desc.slice(0, -1)
-      }
-      desc += '…'
-    }
-    ctx.fillText(desc, 70, midY)
-
-    // Col 3: distance badge (x:492, w:72, h:16, r:8)
-    const badgeFill = isSelected ? '#333' : '#1a1a1a'
-    const badgeStroke = isSelected ? '#888' : '#333'
-    ctx.fillStyle = badgeFill
-    roundRect(ctx, 492, rowY + 6, 72, 16, 8)
-    ctx.fill()
-    ctx.strokeStyle = badgeStroke
-    ctx.lineWidth = 1
-    ctx.stroke()
-    ctx.fillStyle = isSelected ? '#ccc' : '#888'
-    ctx.font = '11px sans-serif'
-    ctx.textAlign = 'right'
-    ctx.fillText(`${stop.distance}m`, 558, midY)
-  })
-
-  // ── Detail bar (y:264 h:24) ──
-  // Top border
-  ctx.strokeStyle = '#2a2a2a'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, 264)
-  ctx.lineTo(576, 264)
-  ctx.stroke()
-
-  ctx.font = '11px sans-serif'
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'left'
-
-  const selectedStop = selectedIdx >= 1 ? stops[selectedIdx - 1] : null
-  if (selectedStop) {
-    ctx.fillStyle = '#777'
-    ctx.fillText(
-      `◎  ${selectedStop.BusStopCode}  ${selectedStop.Description}  ·  ${selectedStop.RoadName}  ·  ${selectedStop.distance}m`,
-      8, 276
-    )
-  } else {
-    ctx.fillStyle = '#444'
-    ctx.fillText('  ↑↓ Navigate   ·   Click to select', 8, 276)
-  }
-
-  return canvas
-}
-
-function drawArrivalsCanvas(stop: BusStop, data: LtaResponse, updated: string): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  canvas.width = 576
-  canvas.height = 288
-  const ctx = canvas.getContext('2d')!
-
-  // Black background
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, 576, 288)
-
-  // ── Back button card (y:6, x:6, w:564, h:42, r:6) ──
-  ctx.fillStyle = '#0f0f0f'
-  roundRect(ctx, 6, 6, 564, 42, 6)
-  ctx.fill()
-  ctx.strokeStyle = '#fff'
-  ctx.lineWidth = 1.5
-  roundRect(ctx, 6, 6, 564, 42, 6)
-  ctx.stroke()
-
-  ctx.textBaseline = 'middle'
-
-  // "◂" back arrow
-  ctx.fillStyle = '#fff'
-  ctx.font = 'bold 16px sans-serif'
-  ctx.textAlign = 'left'
-  ctx.fillText('◂', 18, 27)
-
-  // Stop code
-  ctx.font = 'bold 13px monospace'
-  ctx.fillStyle = '#fff'
-  ctx.fillText(stop.BusStopCode, 36, 27)
-
-  // Stop name (truncated to 320px from x:96)
-  ctx.font = '14px sans-serif'
-  ctx.fillStyle = '#ddd'
-  const maxNameW = 320
-  let stopName = stop.Description
-  if (ctx.measureText(stopName).width > maxNameW) {
-    while (stopName.length > 0 && ctx.measureText(stopName + '…').width > maxNameW) {
-      stopName = stopName.slice(0, -1)
-    }
-    stopName += '…'
-  }
-  ctx.fillText(stopName, 96, 27)
-
-  // Updated time right-aligned at x:562
-  ctx.font = '11px sans-serif'
-  ctx.fillStyle = '#555'
-  ctx.textAlign = 'right'
-  ctx.fillText(updated, 562, 27)
-
-  // ── Column header (y:54 h:26) ──
-  ctx.fillStyle = '#0a0a0a'
-  ctx.fillRect(0, 54, 576, 26)
-  // Bottom border
-  ctx.strokeStyle = '#222'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(0, 80)
-  ctx.lineTo(576, 80)
-  ctx.stroke()
-
-  // Vertical separator lines (y:54 to y:288)
-  ctx.strokeStyle = '#1a1a1a'
-  ;[100, 220, 340].forEach(x => {
-    ctx.beginPath()
-    ctx.moveTo(x, 54)
-    ctx.lineTo(x, 288)
-    ctx.stroke()
-  })
-
-  // Column labels
-  ctx.font = 'bold 11px sans-serif'
-  ctx.fillStyle = '#555'
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'left'
-  const colLabels = ['SVC', 'NEXT', '2ND', '3RD']
-  const colX = [12, 108, 228, 348]
-  colLabels.forEach((label, i) => ctx.fillText(label, colX[i], 67))
-
-  // ── Service rows (y:80) ──
-  const services = data.Services.slice(0, 8)
-  const rowH = Math.floor((288 - 80) / Math.max(1, services.length))
-
-  services.forEach((svc, i) => {
-    const rowY = 80 + i * rowH
-
-    // Alternating row bg
-    if (i % 2 === 0) {
-      ctx.fillStyle = '#070707'
-      ctx.fillRect(0, rowY, 576, rowH)
-    }
-
-    // Row top separator
-    ctx.strokeStyle = '#111'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(0, rowY)
-    ctx.lineTo(576, rowY)
-    ctx.stroke()
-
-    const midY = rowY + rowH / 2
-    ctx.textBaseline = 'middle'
-
-    // Bus number
-    ctx.font = 'bold 15px monospace'
-    ctx.fillStyle = '#fff'
-    ctx.textAlign = 'left'
-    ctx.fillText(svc.ServiceNo, 12, midY)
-
-    // NEXT arrival
-    const nextM = minutesFromNow(svc.NextBus?.EstimatedArrival)
-    if (svc.NextBus?.EstimatedArrival && nextM >= 0) {
-      if (nextM === 0) {
-        // "Arr" badge
-        const badgeH = rowH * 0.7
-        const badgeY = rowY + rowH * 0.15
-        ctx.fillStyle = '#1c1c1c'
-        roundRect(ctx, 108, badgeY, 38, badgeH, 4)
-        ctx.fill()
-        ctx.strokeStyle = '#555'
-        ctx.lineWidth = 1
-        roundRect(ctx, 108, badgeY, 38, badgeH, 4)
-        ctx.stroke()
-        ctx.fillStyle = '#fff'
-        ctx.font = 'bold 12px sans-serif'
-        ctx.textAlign = 'left'
-        ctx.fillText('Arr', 114, midY)
-      } else {
-        ctx.fillStyle = '#fff'
-        ctx.font = 'bold 14px sans-serif'
-        ctx.textAlign = 'left'
-        ctx.fillText(`${nextM}min`, 108, midY)
-      }
-    }
-
-    // 2ND arrival
-    const next2M = minutesFromNow(svc.NextBus2?.EstimatedArrival)
-    if (svc.NextBus2?.EstimatedArrival && next2M >= 0) {
-      ctx.fillStyle = '#888'
-      ctx.font = '13px sans-serif'
-      ctx.textAlign = 'left'
-      ctx.fillText(next2M === 0 ? 'Arr' : `${next2M}min`, 228, midY)
-    }
-
-    // 3RD arrival
-    const next3M = minutesFromNow(svc.NextBus3?.EstimatedArrival)
-    if (svc.NextBus3?.EstimatedArrival && next3M >= 0) {
-      ctx.fillStyle = '#555'
-      ctx.font = '13px sans-serif'
-      ctx.textAlign = 'left'
-      ctx.fillText(next3M === 0 ? 'Arr' : `${next3M}min`, 348, midY)
-    }
-  })
-
-  return canvas
-}
-
-async function glassesStopList(bridge: Bridge, stops: BusStop[], selectedIdx: number) {
-  const canvas = drawStopListCanvas(stops, selectedIdx)
-  const blankItems = Array(stops.length + 1).fill(' ')
+// ── Stop list view ────────────────────────────────────────────────────────────
+async function glassesStopList(bridge: Bridge, stops: BusStop[]) {
+  const rows = [
+    `★  FAVORITES`,
+    ...stops.map(s => `${s.BusStopCode}  ${s.Description}  (${s.distance}m)`),
+  ]
+  const items = [...rows, ...Array(Math.max(0, 8 - rows.length)).fill('')]
   try {
     await bridge.rebuildPageContainer(new RebuildPageContainer({
-      containerTotalNum: 2,
-      imageObject: [new ImageContainerProperty({
-        xPosition: 0, yPosition: 0, width: 576, height: 288,
-        containerID: 1, containerName: 'img-stops',
-      })],
+      containerTotalNum: 3,
+      textObject: [
+        new TextContainerProperty({
+          xPosition: 0, yPosition: 0, width: 380, height: 40,
+          containerID: CID_STOP_TITLE, containerName: 'stop-title',
+          borderWidth: 0, content: 'NEARBY STOPS',
+        }),
+        new TextContainerProperty({
+          xPosition: 380, yPosition: 0, width: 196, height: 40,
+          containerID: CID_STOP_COUNT, containerName: 'stop-count',
+          borderWidth: 0, content: `${stops.length} stops <=500m`,
+        }),
+      ],
       listObject: [new ListContainerProperty({
-        xPosition: 0, yPosition: 287, width: 576, height: 1,
-        containerID: 2, containerName: 'stop-list',
+        xPosition: 0, yPosition: 40, width: 576, height: 248,
+        containerID: CID_STOP_LIST, containerName: 'stop-list',
         isEventCapture: 1,
         itemContainer: new ListItemContainerProperty({
-          itemCount: blankItems.length, itemWidth: 0,
-          isItemSelectBorderEn: 0, itemName: blankItems,
+          itemCount: items.length, itemWidth: 576,
+          isItemSelectBorderEn: 1, itemName: items,
         }),
       })],
     }))
-    await bridge.updateImageRawData(new ImageRawDataUpdate({
-      containerID: 1,
-      imageData: canvasToGray4(canvas),
-    }))
-  } catch { /* ignore */ }
+  } catch (e) { console.error('[glasses] stop list error:', e) }
 }
 
-async function refreshStopImage(bridge: Bridge, stops: BusStop[], selectedIdx: number) {
-  const canvas = drawStopListCanvas(stops, selectedIdx)
+// ── Favorites view ────────────────────────────────────────────────────────────
+async function glassesFavorites(bridge: Bridge, favStops: BusStop[]) {
+  const rows = favStops.length
+    ? [
+        `← BACK`,
+        ...favStops.map(s => `${s.BusStopCode}  ${s.Description}  ${s.RoadName}`),
+      ]
+    : [
+        `← BACK`,
+        'No favorites yet.',
+        'View arrivals on glasses,',
+        'then double-click to save.',
+      ]
+  const items = [...rows, ...Array(Math.max(0, 8 - rows.length)).fill('')]
   try {
-    await bridge.updateImageRawData(new ImageRawDataUpdate({
-      containerID: 1,
-      imageData: canvasToGray4(canvas),
+    await bridge.rebuildPageContainer(new RebuildPageContainer({
+      containerTotalNum: 3,
+      textObject: [
+        new TextContainerProperty({
+          xPosition: 0, yPosition: 0, width: 380, height: 40,
+          containerID: CID_STOP_TITLE, containerName: 'fav-title',
+          borderWidth: 0, content: 'FAVORITES',
+        }),
+        new TextContainerProperty({
+          xPosition: 380, yPosition: 0, width: 196, height: 40,
+          containerID: CID_STOP_COUNT, containerName: 'fav-count',
+          borderWidth: 0, content: favStops.length ? `${favStops.length} saved` : 'none saved',
+        }),
+      ],
+      listObject: [new ListContainerProperty({
+        xPosition: 0, yPosition: 40, width: 576, height: 248,
+        containerID: CID_FAV_LIST, containerName: 'fav-list',
+        isEventCapture: 1,
+        itemContainer: new ListItemContainerProperty({
+          itemCount: items.length, itemWidth: 576,
+          isItemSelectBorderEn: favStops.length > 0 ? 1 : 0,
+          itemName: items,
+        }),
+      })],
     }))
-  } catch { /* ignore */ }
+  } catch (e) { console.error('[glasses] favorites error:', e) }
 }
 
+// ── Arrivals view ─────────────────────────────────────────────────────────────
 async function glassesArrivals(bridge: Bridge, stop: BusStop, data: LtaResponse) {
   const updated = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' })
-  const canvas = drawArrivalsCanvas(stop, data, updated)
+  const sorted = [...(data.Services ?? [])].sort((a, b) =>
+    a.ServiceNo.localeCompare(b.ServiceNo, undefined, { numeric: true })
+  )
+  const svcRows = sorted.map(svc => {
+    const n1 = formatArrival(svc.NextBus?.EstimatedArrival).padEnd(12)
+    const n2 = formatArrival(svc.NextBus2?.EstimatedArrival).padEnd(12)
+    const n3 = formatArrival(svc.NextBus3?.EstimatedArrival)
+    return `${svc.ServiceNo.padEnd(10)}${n1}${n2}${n3}`
+  })
+  const rows = [
+    `< ${stop.BusStopCode}  ${stop.Description}  (updated: ${updated})`,
+    `SVC       NEXT        2ND         3RD`,
+    ...(svcRows.length ? svcRows : ['No services in operation']),
+  ]
+  const items = [...rows, ...Array(Math.max(0, 8 - rows.length)).fill('')]
   try {
     await bridge.rebuildPageContainer(new RebuildPageContainer({
-      containerTotalNum: 2,
-      imageObject: [new ImageContainerProperty({
-        xPosition: 0, yPosition: 0, width: 576, height: 288,
-        containerID: 3, containerName: 'img-arrivals',
-      })],
+      containerTotalNum: 1,
       listObject: [new ListContainerProperty({
-        xPosition: 0, yPosition: 287, width: 576, height: 1,
-        containerID: 4, containerName: 'arrivals',
+        xPosition: 0, yPosition: 0, width: 576, height: 288,
+        containerID: CID_ARR_LIST, containerName: 'arrivals',
         isEventCapture: 1,
         itemContainer: new ListItemContainerProperty({
-          itemCount: 1, itemWidth: 0,
-          isItemSelectBorderEn: 0, itemName: [' '],
+          itemCount: items.length, itemWidth: 576,
+          isItemSelectBorderEn: 0, itemName: items,
         }),
       })],
     }))
-    await bridge.updateImageRawData(new ImageRawDataUpdate({
-      containerID: 3,
-      imageData: canvasToGray4(canvas),
-    }))
-  } catch { /* ignore */ }
+  } catch (e) { console.error('[glasses] arrivals error:', e) }
 }
 
 // ── Browser UI ────────────────────────────────────────────────────────────────
@@ -523,6 +253,30 @@ function renderStops(stops: BusStop[], onSelect: (s: BusStop) => void) {
     .join('')
   el.querySelectorAll<HTMLElement>('.bus-card').forEach((card, i) =>
     card.addEventListener('click', () => onSelect(stops[i]))
+  )
+}
+
+function renderFavStops(favStops: BusStop[], onSelect: (s: BusStop) => void) {
+  const el = document.getElementById('results')!
+  document.getElementById('stop-name')!.textContent = `${favStops.length} favorite stops`
+  if (!favStops.length) {
+    el.innerHTML = '<p style="color:#555;font-size:13px;text-align:center;padding:20px">No favorites yet.<br><br>View a stop\'s arrivals on the glasses, then double-click to save it.</p>'
+    return
+  }
+  el.innerHTML = favStops
+    .map(
+      (_, i) => `<div class="bus-card" data-idx="${i}" style="cursor:pointer">
+        <div class="bus-number" style="font-size:14px;min-width:52px">${favStops[i].BusStopCode}</div>
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:600">${favStops[i].Description}</div>
+          <div style="font-size:12px;color:#888">${favStops[i].RoadName}</div>
+        </div>
+        <div style="font-size:18px;color:gold;padding-left:8px">★</div>
+      </div>`
+    )
+    .join('')
+  el.querySelectorAll<HTMLElement>('.bus-card').forEach((card, i) =>
+    card.addEventListener('click', () => onSelect(favStops[i]))
   )
 }
 
@@ -558,13 +312,52 @@ async function main() {
   let refreshTimer: ReturnType<typeof setInterval> | null = null
   const backBtn = document.getElementById('back-btn') as HTMLButtonElement
 
+  // ── Favorites state ────────────────────────────────────────────────────────
+  let favoriteStopCodes: string[] = []
+  let currentStop: BusStop | null = null
+  let listView: 'nearby' | 'favorites' = 'nearby'
+
+  if (bridge) {
+    try {
+      const raw = await bridge.getLocalStorage('favorites')
+      favoriteStopCodes = raw ? JSON.parse(raw) : []
+    } catch { /* no saved favorites */ }
+  }
+
+  async function getFavStops(): Promise<BusStop[]> {
+    const all = await fetchAllBusStops()
+    return favoriteStopCodes
+      .map(code => {
+        const s = all.find(x => x.BusStopCode === code)
+        return s ? { ...s, distance: 0 } : null
+      })
+      .filter(Boolean) as BusStop[]
+  }
+
+  async function toggleFavorite(stop: BusStop) {
+    const idx = favoriteStopCodes.indexOf(stop.BusStopCode)
+    if (idx >= 0) {
+      favoriteStopCodes.splice(idx, 1)
+      setStatus(`Removed ${stop.BusStopCode} from favorites`)
+    } else {
+      favoriteStopCodes.push(stop.BusStopCode)
+      setStatus(`★ Added ${stop.BusStopCode} to favorites`)
+    }
+    if (bridge) {
+      try { await bridge.setLocalStorage('favorites', JSON.stringify(favoriteStopCodes)) } catch { /* ignore */ }
+    }
+    setTimeout(() => setStatus(''), 2000)
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+
   function clearRefresh() {
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
   }
 
   async function loadArrivals(stop: BusStop) {
     clearRefresh()
-    selectedStopIdx = 0
+    currentStop = stop
     setError('')
     backBtn.style.display = 'inline-block'
     try {
@@ -585,39 +378,70 @@ async function main() {
 
   async function showStops() {
     clearRefresh()
-    selectedStopIdx = 0
+    listView = 'nearby'
     backBtn.style.display = 'none'
     renderStops(stops, loadArrivals)
-    if (bridge) await glassesStopList(bridge, stops, selectedStopIdx)
+    if (bridge) await glassesStopList(bridge, stops)
   }
 
-  let selectedStopIdx = 0
+  async function showFavorites() {
+    clearRefresh()
+    listView = 'favorites'
+    backBtn.style.display = 'none'
+    const favStops = await getFavStops()
+    renderFavStops(favStops, loadArrivals)
+    if (bridge) await glassesFavorites(bridge, favStops)
+  }
+
 
   if (bridge) {
+    try {
+      await bridge.createStartUpPageContainer(new CreateStartUpPageContainer({
+        containerTotalNum: 0,
+        imageObject: [],
+        listObject: [],
+      }))
+    } catch { /* ignore */ }
+
     bridge.onEvenHubEvent(event => {
       const listType = event.listEvent?.eventType
       const name     = event.listEvent?.containerName
       const isClick  = event.listEvent != null &&
         (listType == null || listType === OsEventTypeList.CLICK_EVENT)
+      const isDoubleClick = listType === OsEventTypeList.DOUBLE_CLICK_EVENT
 
       if (name === 'arrivals') {
-        if (isClick) showStops()
-      } else if (name === 'stop-list') {
-        if (listType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-          selectedStopIdx = Math.min(stops.length, selectedStopIdx + 1)
-          refreshStopImage(bridge!, stops, selectedStopIdx)
-        } else if (listType === OsEventTypeList.SCROLL_TOP_EVENT) {
-          selectedStopIdx = Math.max(0, selectedStopIdx - 1)
-          refreshStopImage(bridge!, stops, selectedStopIdx)
+        if (isDoubleClick && currentStop) {
+          toggleFavorite(currentStop)
         } else if (isClick) {
-          const target = stops[selectedStopIdx - 1]
+          if (listView === 'favorites') showFavorites()
+          else showStops()
+        }
+      } else if (name === 'stop-list') {
+        const idx = event.listEvent?.currentSelectItemIndex
+        if (isClick) {
+          if (idx == null) { showFavorites(); return }  // SDK omits index for first item
+          const target = stops[idx - 1]
           if (target) loadArrivals(target)
+        }
+      } else if (name === 'fav-list') {
+        const idx = event.listEvent?.currentSelectItemIndex
+        if (isClick) {
+          if (idx == null) { showStops(); return }  // SDK omits index for first item (← BACK)
+          getFavStops().then(favStops => {
+            const target = favStops[idx - 1]
+            if (target) loadArrivals(target)
+            // if no target: no favorites saved, ignore click on instruction rows
+          })
         }
       }
     })
   }
 
-  backBtn.addEventListener('click', showStops)
+  backBtn.addEventListener('click', () => {
+    if (listView === 'favorites') showFavorites()
+    else showStops()
+  })
 
   setStatus('Getting location...')
   setError('')

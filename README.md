@@ -1,6 +1,6 @@
 # SG Bus Timing
 
-Real-time Singapore bus arrival times, built for the [Even Realities G1 smart glasses](https://evenrealities.com) with a companion browser UI.
+Real-time Singapore bus arrival times, built for the [Even Realities G2 smart glasses](https://evenrealities.com)
 
 Scroll and click through nearby bus stops and arrival times directly on your glasses display.
 
@@ -58,24 +58,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. Grant locat
 
 ---
 
-## Glasses Setup (Even Realities G1)
-
-### Simulator
-
-1. Install the Even Hub desktop app and simulator
-2. In one terminal, start the dev server:
-   ```bash
-   npm run dev
-   ```
-3. In another terminal, generate a QR code to connect the simulator:
-   ```bash
-   npm run qr
-   ```
-4. Scan the QR code in the Even Hub simulator
-
-### Real glasses
-
-Same as above — scan the QR code with your G1 glasses via the Even Hub app.
+## Glasses Setup (Even Realities G2)
 
 ---
 
